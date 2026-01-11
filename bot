@@ -14,12 +14,15 @@ const {
 } = require("discord.js");
 
 const fs = require("fs");
-const { token, prefix } = require("./config.json");
+
+// ✅ TOKEN & PREFIX POUR RENDER
+const token = process.env.TOKEN;
+const prefix = "*";
 
 // 🔒 ID DU SALON AUTORISÉ POUR !rules
 const RULES_CHANNEL_ID = "1459719620415066237";
 
-// 📄 FICHIER DE LOG
+// 📄 FICHIERS
 const logFile = "./moderation.log";
 const warnsFile = "./warns.json";
 
