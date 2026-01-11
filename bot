@@ -1,0 +1,283 @@
+const { 
+    Client,
+    GatewayIntentBits,
+    EmbedBuilder,
+    Events,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    PermissionsBitField,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    InteractionType
+} = require("discord.js");
+
+const fs = require("fs");
+const { token, prefix } = require("./config.json");
+
+// 🔒 ID DU SALON AUTORISÉ POUR !rules
+const RULES_CHANNEL_ID = "1459719620415066237";
+
+// 📄 FICHIER DE LOG
+const logFile = "./moderation.log";
+const warnsFile = "./warns.json";
+
+function writeLog(message) {
+    const time = new Date().toLocaleString("fr-FR");
+    fs.appendFileSync(logFile, `[${time}] ${message}\n`, "utf8");
+}
+
+function loadWarns() {
+    if (!fs.existsSync(warnsFile)) fs.writeFileSync(warnsFile, "{}");
+    return JSON.parse(fs.readFileSync(warnsFile, "utf8"));
+}
+
+function saveWarns(data) {
+    fs.writeFileSync(warnsFile, JSON.stringify(data, null, 4));
+}
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
+    ]
+});
+
+client.once(Events.ClientReady, () => {
+    console.log(`✅ Bot connecté : ${client.user.tag}`);
+});
+
+// =========================
+// COMMANDE !rules
+// =========================
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+    if (message.channel.id !== RULES_CHANNEL_ID) return;
+    if (message.content.toLowerCase() !== `${prefix}rules`) return;
+
+    const panelEmbed = new EmbedBuilder()
+        .setTitle("📜 Règlement du serveur")
+        .setDescription("Clique sur le bouton ci-dessous pour consulter le règlement.")
+        .setColor(0x5865F2);
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("voir_reglement")
+            .setLabel("📜 Voir le règlement")
+            .setStyle(ButtonStyle.Primary)
+    );
+
+    await message.channel.send({ embeds: [panelEmbed], components: [row] });
+    await message.delete().catch(() => { });
+});
+
+// =========================
+// BOUTON RÈGLEMENT
+// =========================
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+    if (interaction.customId !== "voir_reglement") return;
+
+    const reglementEmbed = new EmbedBuilder()
+        .setTitle("📜 RÈGLEMENT DU SERVEUR")
+        .setColor(0x5865F2)
+        .setDescription(`
+**1️⃣ Respect & comportement**
+• Respect obligatoire envers tous  
+• Aucune insulte, harcèlement ou discrimination  
+
+**2️⃣ Contenu**
+• Aucun contenu NSFW, choquant ou illégal  
+
+**3️⃣ Spam & publicité**
+• Spam, flood et publicité interdits  
+
+**4️⃣ Pseudos & profils**
+• Pseudos et avatars offensants interdits  
+
+**5️⃣ Vocal**
+• Pas de cris, trolls ou nuisances  
+
+**6️⃣ Boosters 🚀**
+• Les membres ayant boosté le serveur **ne peuvent pas être bannis**  
+• **Sauf en cas d’insulte grave envers un supérieur** ou décision exceptionnelle de l'administration  
+
+**7️⃣ Staff & sanctions**
+• Avertissement, mute, kick possibles  
+
+**8️⃣ Confidentialité**
+• Aucune information personnelle  
+
+**9️⃣ Règle finale**
+• Le règlement doit être respecté en toutes circonstances
+        `)
+        .setFooter({ text: "En restant sur le serveur, tu acceptes ce règlement" });
+
+    await interaction.reply({
+        embeds: [reglementEmbed],
+        ephemeral: true
+    });
+});
+
+// =========================
+// COMMANDE !tempban
+// =========================
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+    if (!message.content.startsWith(`${prefix}tempban`)) return;
+
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+        return message.reply("❌ Tu n'as pas la permission d'utiliser cette commande.");
+    }
+
+    const args = message.content.split(/\s+/);
+    const target = message.mentions.members.first();
+    if (!target) return message.reply("❌ Mentionne un utilisateur.");
+
+    const timeArg = args.slice(2).join("");
+    if (!timeArg) return message.reply("❌ Indique une durée (ex: 1d12h30m).");
+
+    const regex = /(\d+)(d|h|m)/g;
+    let match;
+    let durationMs = 0;
+
+    while ((match = regex.exec(timeArg)) !== null) {
+        const value = parseInt(match[1]);
+        const unit = match[2];
+
+        if (unit === "d") durationMs += value * 86400000;
+        if (unit === "h") durationMs += value * 3600000;
+        if (unit === "m") durationMs += value * 60000;
+    }
+
+    if (durationMs === 0) return message.reply("❌ Format invalide.");
+    if (durationMs > 28 * 86400000) return message.reply("❌ Max 28 jours.");
+
+    try {
+        await target.timeout(durationMs, `Tempban par ${message.author.tag}`);
+        await message.channel.send(`🔇 **${target.user.tag}** est tempban pour **${timeArg}**.`);
+
+        writeLog(`TEMPBAN | ${message.author.tag} -> ${target.user.tag} | ${timeArg}`);
+    } catch {
+        message.reply("❌ Impossible de sanctionner.");
+    }
+});
+
+// =========================
+// COMMANDE !unban
+// =========================
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+    if (!message.content.startsWith(`${prefix}unban`)) return;
+
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+        return message.reply("❌ Tu n'as pas la permission.");
+    }
+
+    const target = message.mentions.members.first();
+    if (!target) return message.reply("❌ Mentionne un utilisateur.");
+
+    try {
+        await target.timeout(null);
+        await message.channel.send(`🔓 **${target.user.tag}** a été débanni.`);
+    } catch {
+        message.reply("❌ Impossible.");
+    }
+});
+
+// =========================
+// COMMANDE !warn
+// =========================
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+    if (!message.content.startsWith(`${prefix}warn`)) return;
+
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+        return message.reply("❌ Tu n'as pas la permission d'utiliser cette commande.");
+    }
+
+    const target = message.mentions.members.first();
+    if (!target) return message.reply("❌ Mentionne un utilisateur.");
+
+    const warns = loadWarns();
+    if (!warns[target.id]) warns[target.id] = 0;
+    warns[target.id]++;
+
+    const count = warns[target.id];
+
+    if (count >= 3) {
+        try {
+            await target.timeout(60 * 60 * 1000, "3 warns atteints");
+            warns[target.id] = 0;
+
+            await message.channel.send(`⛔ **${target.user.tag}** a atteint 3 warns et a été tempban **1 heure**.`);
+            writeLog(`AUTOTEMPBAN | ${target.user.tag} | 1h | 3 warns`);
+        } catch (err) {
+            console.error(err);
+            return message.reply("❌ Impossible de tempban ce membre.");
+        }
+    } else {
+        await message.channel.send(`⚠️ **${target.user.tag}** a reçu un avertissement (**${count}/3**).`);
+        writeLog(`WARN | ${message.author.tag} -> ${target.user.tag} | ${count}/3`);
+    }
+
+    saveWarns(warns);
+});
+
+// =========================
+// COMMANDE !clear
+// =========================
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+    if (message.content !== `${prefix}clear`) return;
+
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+        return message.reply("vous ne pouvez pas executer cette commande");
+    }
+
+    try {
+        const messages = await message.channel.messages.fetch({ limit: 100 });
+        await message.channel.bulkDelete(messages, true);
+
+        const msg = await message.channel.send("🧹 Salon nettoyé !");
+        setTimeout(() => msg.delete(), 3000);
+    } catch (err) {
+        console.error(err);
+    }
+});
+
+// =========================
+// COMMANDE !commands
+// =========================
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+    if (message.content.toLowerCase() !== `${prefix}commands`) return;
+
+    const commandsEmbed = new EmbedBuilder()
+        .setTitle("📋 Liste des commandes")
+        .setColor(0x5865F2)
+        .setDescription(`
+**${prefix}rules** - Affiche le règlement  
+**${prefix}tempban @user durée** - Tempban  
+**${prefix}unban @user** - Retire un tempban  
+**${prefix}warn @user** - Avertit un membre (3 warns = 1h tempban)  
+**${prefix}clear** - Supprime tous les messages du salon  
+**${prefix}commands** - Liste des commandes
+        `);
+
+    await message.channel.send({ embeds: [commandsEmbed] });
+});
+
+// =========================
+// LOGIN
+// =========================
+client.login(token);
